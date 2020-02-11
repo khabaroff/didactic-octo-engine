@@ -1,26 +1,48 @@
-from telebot import TeleBot
-
-from constants import messages, menu_markup, menu_buttons, books_markup, book_paths
 import config
+import telebot
+from aiohttp import web
+import ssl
 
-bot = TeleBot(config.token)
+bot = telebot.TeleBot(config.token)
 
-@bot.message_handler(commands=['start'])
-def handle_start(message):
-    bot.send_message(message.chat.id, messages['start'], reply_markup=menu_markup)
+# Echo handler
+@bot.message_handler(content_types=['text'])
+def handle_text(message):
+    bot.send_message(message.chat.id, message.text)
 
-@bot.message_handler(regexp=menu_buttons["books"])
-def handle_books(message):
-    bot.send_message(message.chat.id, messages["books"], reply_markup=books_markup)
 
-# def tester(call):
-#     return call.data in book_paths
+# Handle data from webhook
+async def webhook_handle(request):
+    if request.path.replace('/', '') == bot.token:
+        request_body_dict = await request.json()
+        update = telebot.types.Update.de_json(request_body_dict)
+        bot.process_new_updates([update])
+        return web.Response()
+    else:
+        return web.Response(status=403)
 
-@bot.callback_query_handler(func=lambda call: call.data in book_paths)
-def handle_callback(call):
-    # path = call.data
-    with open(call.data, "rb") as file:
-        bot.send_document(call.message.chat.id, file, caption=messages["take_it"])
-        bot.delete_message(call.message.chat.id, call.message.message_id)
 
-bot.polling(none_stop=True)
+# Setup webhook
+def webhook_setup():
+    webhook_url_base = f'https://{config.host}:{config.port}'
+    webhook_url_path = f'/{config.token}/'
+
+    app = web.Application()
+    app.router.add_post(webhook_url_path, webhook_handle)
+
+    bot.remove_webhook()
+    bot.set_webhook(url=webhook_url_base + webhook_url_path, certificate=open(config.cert, 'r'))
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+    context.load_cert_chain(config.cert, config.pkey)
+
+    web.run_app(
+        app,
+        host=config.listen,
+        port=config.port,
+        ssl_context=context
+    )
+
+
+if __name__ == '__main__':
+    setup_webhook()
